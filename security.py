@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import jwt
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Security, status
 
 from app.core.config import settings
 from app.core.db_utils.encryption import DataEncryptor
@@ -11,6 +11,7 @@ from app.core.redis.rate_limit import (
     increment_rate_limit,
     service_rate_limit,
 )
+from app.core.third_party_integrations.supabase_home.functions.auth import SupabaseAuthService
 
 # Initialize encryptor - handles both encryption and password hashing
 encryptor = DataEncryptor()
@@ -57,3 +58,25 @@ def verify_password(plain_password: str, encrypted_hash: str, identifier: str) -
 def get_password_hash(password: str) -> str:
     """Create password hash with encryption"""
     return encryptor.create_hash(password)
+
+
+# --- Unified Auth Dependency ---
+auth_service = SupabaseAuthService()
+
+async def get_verified_user(
+    jwt_token: str = Security(auth_service.oauth2_scheme, auto_error=False),
+    api_key: str = Security(auth_service.api_key_scheme, auto_error=False),
+):
+    """
+    Unified dependency for verifying user via JWT or API key.
+    Returns a dict with user info and auth_type ('jwt' or 'api_key').
+    Raises 401 if no valid credentials are provided.
+    """
+    if jwt_token:
+        user = auth_service.get_user_by_token(jwt_token)
+        return {"user": user, "auth_type": "jwt"}
+    elif api_key:
+        user = auth_service.get_user_by_token(api_key)
+        return {"user": user, "auth_type": "api_key"}
+    else:
+        raise HTTPException(status_code=401, detail="No valid credentials")
